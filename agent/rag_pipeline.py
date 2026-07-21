@@ -1,6 +1,4 @@
 from pathlib import Path
-
-from fastmcp.utilities.logging import temporary_log_level
 from langchain_core.tools import tool
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
