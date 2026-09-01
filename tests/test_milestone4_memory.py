@@ -90,7 +90,7 @@ if __name__ == '__main__':
     print('聊天结束了，用户离开电脑，开始测试 30s 后闲置自动总结，请不要操作.........')
 
     try:
-        time.sleep(40)      # 确保能看到总结输出
+        time.sleep(50)      # 确保能看到总结输出
     except KeyboardInterrupt:
         pass
     finally:

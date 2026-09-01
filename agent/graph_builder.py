@@ -45,8 +45,16 @@ def chatbot_node(state: AgentState):
         print('\n「触发超时」正在压缩会话历史，生成自动总结......')
         summary_llm = llm.model_copy(update={'temperature':0.3})
         summary_prompt = (
-            "你是一名HR助理。请用简短的一两句话，总结上面对话中员工咨询的核心问题以及你给出的最终结论。\n"
-            "直接输出总结结果，并以「绘画闲置总结」这几个字开头。"
+            "## 角色\n\n"
+            "你是一名HR助理。请用简短的语言，按照输出格式要求，总结上面对话中员工咨询的核心问题以及你给出的最终结论。\n"
+            "直接按照「输出格式要求」输出结果。\n\n"
+            "## 输出格式要求：\n\n"
+            "「会话闲置总结」\n"
+            "这里输出之前对话的总结："
+            "1. 用户基本信息（姓名、工号）\n"
+            "2. 用户咨询的主要问题\n"
+            "3. 以提供的信息和答复\n"
+            "4. 未完成的事项(如果有)"
         )
         response = summary_llm.invoke(messages[:-1] + [SystemMessage(content=summary_prompt)])
         return  {"messages":[response]}         # 返回总结信息
@@ -101,7 +109,8 @@ def fact_checker_node(state: AgentState):
         f'「知识库原文」：\n{rag_context}\n'
         f'「AI生成的恢复」:\n{last_message.content}\n'
         f'严查金额、职级门槛、天数！发现捏造请判 False 并给出修改意见。\n\n'
-        f'{parser.get_format_instructions()}'
+        f'{parser.get_format_instructions()}\n\n'
+        f'豁免条款：如果仅使用的是get_employee_profile工具，请放行'
     )
 
     response = checker_llm.invoke(check_prompt)
