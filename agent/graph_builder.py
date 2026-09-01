@@ -1,16 +1,18 @@
+from os import name
 from typing import Annotated, TypedDict
 from pydantic import BaseModel, Field
 import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import interrupt
 
 from tools.hr_tools import get_employee_profile, get_leave_balance, generate_employment_certificate
 from agent.rag_pipeline2 import search_hr_policy
@@ -72,6 +74,36 @@ def chatbot_node(state: AgentState):
     response = llm_with_tools.invoke(messages)
 
     return {'messages':[response], 'loop_state':state.get('loop_state', 0) + 1}
+
+
+
+# 人工介入节点
+def human_review_node(state: AgentState):
+    """「人工介入节点」拦截敏感操作，将图挂起等待授权"""
+    last_message = state['messages'][-1]
+    # 检查大模型是否试图调用敏感工具
+    sensitive_tool_call = None
+    if hasattr(last_message, 'tool_calls'):
+        for tool_call in last_message.tool_calls:
+            if tool_call['name'] == 'generate_employment_certificate':
+                sensitive_tool_call = tool_call
+                break
+    if sensitive_tool_call:
+        print('「系统挂起」检测到敏感操作：准备生成证明文件。')
+        user_decision = interrupt('Agent 正在尝试生成包含薪资的证明文件。是否授权执行？（输入‘approve’ 或 ‘reject’）')
+
+        if user_decision == 'reject':
+            print('「人工授权」被驳回。')
+            reject_msg = ToolMessage(
+                content='[SYSTEM] 人工审批未通过，操作已经被拒绝。请安抚用户并告知由于完全问题无法生成。',
+                name=sensitive_tool_call['name'],
+                tool_call_id=sensitive_tool_call['id'],
+            )
+            return {'messages':[reject_msg]}
+
+        print('「人工授权」审批通过，允许放行。')
+        return {'messages':[]}
+
 
 class FactCheckResult(BaseModel):
     is_pass:bool = Field(description='如果AI的回答完全忠于知识库原文输出True，捏造了数字或者政策则输出False')
@@ -140,10 +172,18 @@ def router_after_chatbot(state: AgentState):
     """Chatbot 输出后的路由判断"""
     last_message = state['messages'][-1]
 
-    if last_message.tool_calls:
-        return 'tools'
+    if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+        return 'human_review'
     else:
         return 'fact_checker'
+
+def router_after_review(state: AgentState)->str:
+    """审批节点后的流向判断"""
+    last_message = state['messages'][-1]
+    if isinstance(last_message, ToolMessage):
+        return 'chatbot'
+    else:
+        return 'tools'
 
 def router_after_fact_check(state: AgentState):
     """审计完成后的路由判断"""
@@ -161,6 +201,7 @@ def router_after_fact_check(state: AgentState):
 workflow = StateGraph(AgentState)
 
 workflow.add_node('chatbot', chatbot_node)
+workflow.add_node('human_review', human_review_node)
 workflow.add_node('tools', tools_node)
 workflow.add_node('fact_checker', fact_checker_node)
 
@@ -168,8 +209,14 @@ workflow.add_edge(START, 'chatbot')
 workflow.add_conditional_edges('chatbot',
                                router_after_chatbot,
                                {
-                                   'tools':'tools',
+                                   'human_review':'human_review',
                                    'fact_checker':'fact_checker'
+                               })
+workflow.add_conditional_edges('human_review',
+                               router_after_review,
+                               {
+                                   'chatbot':'chatbot',
+                                   'tools':'tools'
                                })
 workflow.add_edge('tools', 'chatbot')
 workflow.add_conditional_edges('fact_checker',
