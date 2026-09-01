@@ -10,6 +10,7 @@ from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import InMemorySaver
 
 from tools.hr_tools import get_employee_profile, get_leave_balance, generate_employment_certificate
 from agent.rag_pipeline2 import search_hr_policy
@@ -38,6 +39,18 @@ def chatbot_node(state: AgentState):
     """「执行者节点」意图理解、工具调用与内容生成"""
     messages = state.get('messages', [])
 
+    # 新增逻辑：拦截应用层发来的”超时总结“隐藏指令
+    last_message = messages[-1]
+    if isinstance(last_message, HumanMessage) and last_message.content == '__SYS_IDLE_TIMEOUT__':
+        print('\n「触发超时」正在压缩会话历史，生成自动总结......')
+        summary_llm = llm.model_copy(update={'temperature':0.3})
+        summary_prompt = (
+            "你是一名HR助理。请用简短的一两句话，总结上面对话中员工咨询的核心问题以及你给出的最终结论。\n"
+            "直接输出总结结果，并以「绘画闲置总结」这几个字开头。"
+        )
+        response = summary_llm.invoke(messages[:-1] + [SystemMessage(content=summary_prompt)])
+        return  {"messages":[response]}         # 返回总结信息
+
     # 首轮对话注入 System Prompt
     if len(messages) == 1:
         system_msg = SystemMessage(
@@ -58,6 +71,8 @@ class FactCheckResult(BaseModel):
 
 def fact_checker_node(state: AgentState):
     """「审计这节点」后置事实检验 (Self-Reflection)"""
+    print('\n 「审计者介入」正在核查生成内容是否包含幻觉......')
+
     messages = state['messages']
     last_message = messages[-1]
 
@@ -71,8 +86,6 @@ def fact_checker_node(state: AgentState):
     # 若未调用知识库，直接放行
     if not rag_context:
         return {'messages':[]}
-
-    print('\n 「审计这介入」正在核查生成内容是否包含幻觉......')
 
     checker_llm = ChatOpenAI(
         model=os.getenv('DEEPSEEK_MODEL'),
@@ -156,4 +169,6 @@ workflow.add_conditional_edges('fact_checker',
                                    'chatbot':'chatbot',
                                    'end':END
                                })
-hr_agent_app = workflow.compile()
+
+memory = InMemorySaver()
+hr_agent_app = workflow.compile(checkpointer=memory)
