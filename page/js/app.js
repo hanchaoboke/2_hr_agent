@@ -8,7 +8,7 @@
 /* ---------- 配置 ---------- */
 // 后端 API 地址，可通过 localStorage 的 hr_agent_api_base 覆盖
 const API_BASE =
-  localStorage.getItem("hr_agent_api_base") || "http://127.0.0.1:8000";
+  localStorage.getItem("hr_agent_api_base") || "http://192.168.10.229:8000";
 
 /* ---------- 工具元数据（中文标签 + 图标） ---------- */
 const TOOL_META = {

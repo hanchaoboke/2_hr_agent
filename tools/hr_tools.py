@@ -18,7 +18,7 @@ def get_employee_profile(uid:str) -> str:
     根据员工 UID 查询员工的完整人事档案，包括姓名、职级、工作城市、入职年限、基本性质。
     当需要获取当前对话员工的背景属性时，必须首先调用此工具
     """
-    sql = "select uid, name, rank, location, seniority, base_salary from employees where uid = ?"
+    sql = "select uid, name, rank, location, seniority, base_salary from employees where uid = %s"
     res = query_db(conn=db_conn, sql=sql, params=(uid,))
 
     if not res:
@@ -41,7 +41,7 @@ def get_leave_balance(uid:str) -> str:
             b.sick_leave_remaining
     from employees a 
     LEFT JOIN leave_balances b on a.uid = b.uid
-    where a.uid = ?
+    where a.uid = %s
     """
     res = query_db(conn=db_conn, sql=sql, params=(uid,))
     if not res:
@@ -59,7 +59,7 @@ def generate_employment_certificate(uid:str, cer_type:str) -> str:
      - 'employment'：仅开具在职证明（全员可用）
      - 'income'： 开具包含薪资的在职及收入证明（有职级权限限制，仅 P5 及以上可用）
     """
-    sql = "select name, rank, base_salary from employees where uid = ?"
+    sql = "select name, rank, base_salary from employees where uid = %s"
     emp_res = query_db(conn=db_conn, sql=sql, params=(uid,))
 
     if not emp_res:

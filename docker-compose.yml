@@ -33,9 +33,12 @@ services:
     container_name: hr_redis
     restart: unless-stopped
     # AOF 持久化：checkpoint 写后不丢；RDB 每 60s 兜底
-    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    # protected-mode no：宿主机经 docker-proxy（网桥 IP）连接时否则会被 DENIED 拒绝
+    # loadmodule：LangGraph RedisSaver 需要 RediSearch（FT.* 索引）+ RedisJSON（ON JSON 索引）
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1", "--protected-mode", "no", "--loadmodule", "/opt/redis-stack/lib/redisearch.so", "--loadmodule", "/opt/redis-stack/lib/rejson.so"]
     ports:
-      - "6379:6379"
+      # 仅绑定本机回环，避免关闭 protected-mode 后暴露到局域网
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:

@@ -1,4 +1,3 @@
-from os import name
 from typing import Annotated, TypedDict
 from pydantic import BaseModel, Field
 import os
@@ -11,7 +10,9 @@ from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import InMemorySaver
+# from langgraph.checkpoint.memory import InMemorySaver
+import redis
+from langgraph.checkpoint.redis import RedisSaver
 from langgraph.types import interrupt
 
 from tools.hr_tools import get_employee_profile, get_leave_balance, generate_employment_certificate
@@ -226,5 +227,10 @@ workflow.add_conditional_edges('fact_checker',
                                    'end':END
                                })
 
-memory = InMemorySaver()
-hr_agent_app = workflow.compile(checkpointer=memory)
+# memory = InMemorySaver()
+
+_redis_client = redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'))
+checkpointer = RedisSaver(redis_client=_redis_client)
+checkpointer.setup()                                # 首次运行创建 RedisSearch 索引，必须调用一次（幂等）
+
+hr_agent_app = workflow.compile(checkpointer=checkpointer)
