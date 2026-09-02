@@ -6,40 +6,53 @@ import os
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = PROJECT_ROOT / 'db' / 'employees.db'
+# DB_PATH = PROJECT_ROOT / 'db' / 'employees.db'
 
 PG_CONFIG = {
-    'host': os.getenv('POSTGRES_HOST'),
-    'port': os.getenv('POSTGRES_PORT'),
-    'user': os.getenv('POSTGRES_USER'),
-    'password': os.getenv('POSTGRES_PASSWORD'),
+    'host': os.getenv('POSTGRES_HOST', 'localhost'),
+    'port': os.getenv('POSTGRES_PORT', '5432'),
+    'dbname': os.getenv('POSTGRES_DB', 'hr_agent'),
+    'user': os.getenv('POSTGRES_USER', 'hr'),
+    'password': os.getenv('POSTGRES_PASSWORD', 'hr_password'),
 }
 _query_lock = threading.Lock()
 
-def get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
+def get_connection(config: dict = None) -> psycopg2.extensions.connection:
     """
     业务运行时连接函数，仅连接并开启外健
     """
-    if not db_path.exists():
-        raise FileNotFoundError(
-            f'[错误] 数据库文件未找到：{db_path} \n'
-            f'请先在终端手动运行一遍初始化脚本： python database/mock_db.py \n'
-        )
+    cfg = config or PG_CONFIG
+    try:
+        conn = psycopg2.connect(**cfg)
+        conn.autocommit = True          # 查询为主，开启自动提交避免长事务
+        return conn
+    except psycopg2.OperationalError as e:
+        raise ConnectionError(f'错误，无法连接 PostgreSQL （{cfg["host"]}:{cfg["port"]}/{cfg['dbname']}）:{e}\n'
+                              f'请先执行 docker compose up -d 拉起数据库并确认 .env 中的配置')
 
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    conn.execute('PRAGMA foreign_keys = ON')
-    return conn
+    # if not db_path.exists():
+    #     raise FileNotFoundError(
+    #         f'[错误] 数据库文件未找到：{db_path} \n'
+    #         f'请先在终端手动运行一遍初始化脚本： python database/mock_db.py \n'
+    #     )
+    #
+    # conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    # conn.execute('PRAGMA foreign_keys = ON')
+    # return conn
 
-def init_db(db_path:Path = DB_PATH) -> sqlite3.Connection:
+def init_db(config:dict = None) -> psycopg2.extensions.connection:
     """
     数据库初始化语数据落盘（仅手动单次运行）
     """
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    # db_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 连接数据库
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    conn.execute('PRAGMA foreign_keys = ON')
-    cursor = conn.cursor()      # 游标
+    conn = get_connection(config=config)
+    cursor = conn.cursor()  # 游标
+
+    # conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    # conn.execute('PRAGMA foreign_keys = ON')
+    # cursor = conn.cursor()      # 游标
 
     # 创建员工表
     cursor.execute("""
@@ -63,9 +76,9 @@ def init_db(db_path:Path = DB_PATH) -> sqlite3.Connection:
     )
     ''')
 
-    # 清空旧数据（确保幂等性）
+    # 清空旧数据（确保幂等性）先删除子表再删除主表
+    cursor.execute('''delete from leave_balances''')
     cursor.execute('''delete from employees''')
-    cursor.execute('''delete from leave_balances where 1=1''')
 
     # 注入一些数据
     test_employees = [
@@ -82,27 +95,35 @@ def init_db(db_path:Path = DB_PATH) -> sqlite3.Connection:
         ('1004', 2, 5),
     ]
 
-    cursor.executemany("insert into employees values (?, ?, ?, ?, ?, ?)", test_employees)
-    cursor.executemany("insert into leave_balances values (?, ?, ?)", test_balances)
+    cursor.executemany("insert into employees values (%s, %s, %s, %s, %s, %s)", test_employees)
+    cursor.executemany("insert into leave_balances values (%s, %s, %s)", test_balances)
 
     conn.commit()
+    cursor.close()
 
     print('「成功」实体数据库已成功落盘')
-    print(f'数据库路径：{db_path}')
+    print(f'数据库路径：{PG_CONFIG['host']}:{PG_CONFIG['port']}/{PG_CONFIG["dbname"]}')
     return conn
 
-def query_db(conn:sqlite3.Connection, sql:str, params:tuple = ()):
+def query_db(conn:psycopg2.extensions.connection, sql:str, params:tuple = ()):
     """通用查询函数"""
-    cursor = conn.cursor()
-    cursor.execute(sql, params)
-    columns = [col[0] for col in cursor.description]    # 获取元数据，col[0] 包含表的列名
-    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    with _query_lock:
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        columns = [col[0] for col in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        cursor.close()
+        return rows
+    # cursor = conn.cursor()
+    # cursor.execute(sql, params)
+    # columns = [col[0] for col in cursor.description]    # 获取元数据，col[0] 包含表的列名
+    # return [dict(zip(columns, row)) for row in cursor.fetchall()]
 """
 cursor.fetchall() : 获取所有行
 zip(columns, row)：将列名和值配对
 dict：将配对转换成字典
 """
-def close_db(conn:sqlite3.Connection):
+def close_db(conn:psycopg2.extensions.connection):
     """安全关闭数据库"""
     if conn:
         conn.close()
