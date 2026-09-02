@@ -1,0 +1,49 @@
+# HR Agent 本地基础设施
+# - postgres : 业务数据库（employees 库：员工档案 + 假期余额）
+# - redis    : LangGraph checkpoint 会话持久化
+#
+# 启动：docker compose up -d
+# 停止（保留数据）：docker compose down
+# 停止（清空数据重建）：docker compose down -v && docker compose up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hr_agent_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hr_password}
+      POSTGRES_DB: ${POSTGRES_DB:-hr_agent}
+      TZ: Asia/Shanghai
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # 首次启动自动建表并注入测试数据（仅数据卷为空时执行）
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hr_agent -d employees"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis/redis-stack:latest
+    container_name: hr_redis
+    restart: unless-stopped
+    # AOF 持久化：checkpoint 写后不丢；RDB 每 60s 兜底
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pg_data:
+  redis_data:

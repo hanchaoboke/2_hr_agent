@@ -1,8 +1,20 @@
 import sqlite3
+import threading
 from pathlib import Path
+import psycopg2
+import os
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = PROJECT_ROOT / 'db' / 'employees.db'
+
+PG_CONFIG = {
+    'host': os.getenv('POSTGRES_HOST'),
+    'port': os.getenv('POSTGRES_PORT'),
+    'user': os.getenv('POSTGRES_USER'),
+    'password': os.getenv('POSTGRES_PASSWORD'),
+}
+_query_lock = threading.Lock()
 
 def get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
     """
